@@ -1,0 +1,52 @@
+name: Land Alpha Daily Scan
+
+on:
+  schedule:
+    # Runs daily at 14:00 UTC (8AM CST / 9AM CDT)
+    - cron: '0 14 * * *'
+
+  # Allow manual trigger from GitHub UI for testing
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Land Alpha scan
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SCRAPINGBEE_API_KEY: ${{ secrets.SCRAPINGBEE_API_KEY }}
+          MAX_PRICE: '200000'
+          MAX_PPA: '35000'
+          MIN_ACRES: '3'
+          MIN_SCORE: '6.0'
+        run: python land_alpha_agent.py
+
+      - name: Upload scan results as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-results-${{ github.run_number }}
+          path: |
+            bronze/
+            silver/
+            gold/
+          retention-days: 30
+          if-no-files-found: ignore
