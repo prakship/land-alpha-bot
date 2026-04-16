@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Land Alpha Agent — DFW Land Banking Intelligence Pipeline
+  Serverless land deal scanner with Telegram alerts and S3 data lake.
+
+Globals:
+  Function:
+    Timeout: 120
+    Runtime: python3.11
+    MemorySize: 512
+    Environment:
+      Variables:
+        TELEGRAM_BOT_TOKEN: !Ref TelegramBotToken
+        TELEGRAM_CHAT_ID: !Ref TelegramChatId
+        SCRAPINGBEE_API_KEY: !Ref ScrapingBeeApiKey
+        S3_BUCKET: !Ref DataBucket
+        MAX_PRICE: '200000'
+        MAX_PPA: '35000'
+        MIN_ACRES: '3'
+        MIN_SCORE: '6.0'
+
+Parameters:
+  TelegramBotToken:
+    Type: String
+    NoEcho: true
+    Description: Telegram Bot API token from @BotFather
+  TelegramChatId:
+    Type: String
+    Description: Telegram chat/channel ID for alerts
+  ScrapingBeeApiKey:
+    Type: String
+    NoEcho: true
+    Description: ScrapingBee API key for web scraping
+
+Resources:
+  # ── S3 Data Lake ──
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'land-alpha-data-${AWS::AccountId}'
+      LifecycleConfiguration:
+        Rules:
+          - Id: ArchiveBronzeAfter30Days
+            Prefix: bronze/
+            Status: Enabled
+            Transitions:
+              - StorageClass: GLACIER
+                TransitionInDays: 30
+          - Id: ExpireBronzeAfter365Days
+            Prefix: bronze/
+            Status: Enabled
+            ExpirationInDays: 365
+      Tags:
+        - Key: Project
+          Value: LandAlpha
+
+  # ── Lambda Function ──
+  LandAlphaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: land-alpha-agent
+      CodeUri: ./
+      Handler: land_alpha_agent.lambda_handler
+      Description: Daily land deal scanner for DFW markets
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref DataBucket
+      Events:
+        DailyMorningScan:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 14 * * ? *)  # 8:00 AM CST = 14:00 UTC
+            Description: Daily morning scan at 8AM CST
+            Enabled: true
+
+  # ── CloudWatch Alarm (if Lambda fails) ──
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: LandAlpha-Errors
+      AlarmDescription: Alert if Land Alpha Lambda function fails
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref LandAlphaFunction
+      Statistic: Sum
+      Period: 86400  # 24 hours
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+
+Outputs:
+  FunctionArn:
+    Description: Land Alpha Lambda Function ARN
+    Value: !GetAtt LandAlphaFunction.Arn
+  DataBucketName:
+    Description: S3 Data Lake Bucket
+    Value: !Ref DataBucket
+  Schedule:
+    Description: Scan schedule
+    Value: "Daily at 8:00 AM CST (14:00 UTC)"
